@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using AudioSidecar.Models;
+using AudioSidecar.Services;
 
 namespace AudioSidecar;
 
@@ -18,12 +19,13 @@ internal static partial class Program
         }
 
         using var shutdown = new CancellationTokenSource();
+        using var audioCapture = new AudioCaptureService();
 
         await SendLogAsync("info", "audio sidecar started", shutdown.Token);
 
         try
         {
-            await ReadInputLoopAsync(shutdown);
+            await ReadInputLoopAsync(shutdown, audioCapture);
         }
         catch (OperationCanceledException)
         {
@@ -45,7 +47,7 @@ internal static partial class Program
         }
     }
 
-    private static async Task ReadInputLoopAsync(CancellationTokenSource shutdown)
+    private static async Task ReadInputLoopAsync(CancellationTokenSource shutdown, AudioCaptureService audioCapture)
     {
         while (!shutdown.IsCancellationRequested)
         {
@@ -87,16 +89,19 @@ internal static partial class Program
 
             switch (command?.Type)
             {
+                case BridgeMessageTypes.StartCapture:
                 case BridgeMessageTypes.ControlStart:
-                    await SendLogAsync("info", "received start command", shutdown.Token);
+                    audioCapture.Start();
                     break;
 
+                case BridgeMessageTypes.StopCapture:
                 case BridgeMessageTypes.ControlStop:
-                    await SendLogAsync("info", "received stop command", shutdown.Token);
+                    audioCapture.Stop();
                     break;
 
                 case BridgeMessageTypes.ControlShutdown:
                 case BridgeMessageTypes.Exit:
+                    audioCapture.Stop();
                     shutdown.Cancel();
                     return;
 
