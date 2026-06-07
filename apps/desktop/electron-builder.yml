@@ -1,9 +1,11 @@
-appId: com.ai-live-interpreter.desktop
-productName: AI Live Interpreter
+appId: com.linguflow.desktop
+productName: LinguaFlow
 directories:
+  buildResources: build
   output: release
 files:
   - out/**
+  - build/icon.png
   - package.json
 extraResources:
   - from: ../audio-sidecar/bin/Release/net8.0/win-x64/publish/
@@ -11,6 +13,7 @@ extraResources:
     filter:
       - "**/*"
 win:
+  icon: build/icon.ico
   target:
     - nsis
     - zip

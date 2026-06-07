@@ -4,8 +4,13 @@ import { registerIpcHandlers } from "./ipc-handlers";
 import { createOverlayWindow } from "./overlay-window";
 import { RealtimePipeline } from "./realtime-pipeline";
 
+const appName = "LinguaFlow";
+const iconPath = join(app.getAppPath(), "build", "icon.png");
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
+    title: appName,
+    icon: iconPath,
     width: 1080,
     height: 720,
     minWidth: 900,
@@ -28,6 +33,8 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   }
 }
+
+app.setName(appName);
 
 app.whenReady().then(() => {
   const pipeline = new RealtimePipeline();
