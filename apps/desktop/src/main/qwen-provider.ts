@@ -1,15 +1,21 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
-import type { SubtitleSegment, SubtitleState } from "@protocol";
 
 type QwenProviderEvents = {
   open: [];
   ready: [];
   close: [code: number, reason: string];
   error: [error: Error];
-  subtitle: [state: SubtitleState];
+  text: [event: QwenSubtitleTextEvent];
   raw: [message: unknown];
+};
+
+export type QwenSubtitleTextEvent = {
+  sourceText?: string;
+  translatedText?: string;
+  isFinal: boolean;
+  receivedAtMs: number;
 };
 
 export type QwenProviderOptions = {
@@ -32,7 +38,6 @@ export class QwenProvider extends EventEmitter {
   private ws: WebSocket | null = null;
   private sourceText = "";
   private translatedText = "";
-  private currentSegmentId = randomUUID();
   private sessionReady = false;
 
   private apiKey: string;
@@ -40,8 +45,6 @@ export class QwenProvider extends EventEmitter {
   private url: string;
   private readonly sourceLanguage: string;
   private readonly targetLanguage: string;
-
-  public subtitleState: SubtitleState;
 
   constructor(options: QwenProviderOptions = {}) {
     super();
@@ -54,12 +57,14 @@ export class QwenProvider extends EventEmitter {
       getRealtimeEndpoint(options.region ?? readRegionFromEnv() ?? "cn");
     this.sourceLanguage = options.sourceLanguage ?? "auto";
     this.targetLanguage = options.targetLanguage ?? "zh";
-    this.subtitleState = {
-      isListening: false,
-      sourceLanguage: this.sourceLanguage,
-      targetLanguage: this.targetLanguage,
-      history: []
-    };
+  }
+
+  getSourceLanguage(): string {
+    return this.sourceLanguage;
+  }
+
+  getTargetLanguage(): string {
+    return this.targetLanguage;
   }
 
   connect(): void {
@@ -81,11 +86,8 @@ export class QwenProvider extends EventEmitter {
     });
 
     this.ws.on("open", () => {
-      const { lastError: _lastError, ...state } = this.subtitleState;
-      this.subtitleState = { ...state, isListening: true };
       this.emit("open");
       this.configureSession();
-      this.emitSubtitle(false);
     });
 
     this.ws.on("message", (data) => {
@@ -93,16 +95,12 @@ export class QwenProvider extends EventEmitter {
     });
 
     this.ws.on("error", (error) => {
-      this.subtitleState = { ...this.subtitleState, lastError: error.message };
       this.emit("error", error);
-      this.emitSubtitle(false);
     });
 
     this.ws.on("close", (code, buffer) => {
       const reason = buffer.toString("utf8");
-      this.subtitleState = { ...this.subtitleState, isListening: false };
       this.emit("close", code, reason);
-      this.emitSubtitle(false);
       this.ws = null;
     });
   }
@@ -115,8 +113,8 @@ export class QwenProvider extends EventEmitter {
     this.ws?.close();
     this.ws = null;
     this.sessionReady = false;
-    this.subtitleState = { ...this.subtitleState, isListening: false };
-    this.emitSubtitle(false);
+    this.sourceText = "";
+    this.translatedText = "";
   }
 
   setApiKey(apiKey: string): void {
@@ -141,6 +139,17 @@ export class QwenProvider extends EventEmitter {
     );
   }
 
+  commitAudio(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.sessionReady) {
+      return;
+    }
+
+    this.sendJson({
+      event_id: randomUUID(),
+      type: "input_audio_buffer.commit"
+    });
+  }
+
   private configureSession(): void {
     this.sendJson({
       event_id: randomUUID(),
@@ -155,7 +164,8 @@ export class QwenProvider extends EventEmitter {
         },
         translation: {
           language: this.targetLanguage
-        }
+        },
+        turn_detection: null
       }
     });
   }
@@ -200,59 +210,47 @@ export class QwenProvider extends EventEmitter {
     }
 
     const type = readString(payload, "type");
-    const transcript = pickCompositeText(payload, ["transcript", "text", "delta", "stash"]);
-    const translation = pickNestedText(payload, [
-      ["translation"],
-      ["output", "translation"],
-      ["response", "translation"],
-      ["response", "audio_transcript", "text"],
-      ["response", "text"]
-    ]);
+    const transcript = pickSourceTranscriptText(payload, type);
+    const translation = pickTranslationText(payload, type);
+    const isFinal = isFinalEvent(type) && isTranslationEvent(type);
+    let changed = false;
 
     if (isSourceTranscriptEvent(type) && transcript) {
-      this.sourceText = transcript;
+      this.sourceText = mergeText(this.sourceText, transcript.text, transcript.mode);
+      changed = true;
     }
 
-    if (isTranslationEvent(type) && (translation || transcript)) {
-      this.translatedText = translation ?? transcript ?? this.translatedText;
+    if (isTranslationEvent(type) && translation && this.isLikelyTargetLanguage(translation.text)) {
+      this.translatedText = mergeText(this.translatedText, translation.text, translation.mode);
+      changed = true;
     }
 
     if (!this.sourceText && transcript && !isTranslationEvent(type)) {
-      this.sourceText = transcript;
+      this.sourceText = transcript.text;
+      changed = true;
     }
 
-    if (!this.translatedText && translation) {
-      this.translatedText = translation;
+    if (changed || (isFinal && (this.sourceText || this.translatedText))) {
+      this.emit("text", {
+        sourceText: this.sourceText || undefined,
+        translatedText: this.translatedText || undefined,
+        isFinal,
+        receivedAtMs: Date.now()
+      });
     }
-
-    if (this.sourceText || this.translatedText) {
-      this.emitSubtitle(isFinalEvent(type));
-    }
-  }
-
-  private emitSubtitle(isFinal: boolean): void {
-    const now = Date.now();
-    const current: SubtitleSegment = {
-      id: this.currentSegmentId,
-      sourceText: this.sourceText,
-      translatedText: this.translatedText,
-      startedAtMs: now,
-      updatedAtMs: now,
-      isFinal
-    };
-
-    const history = isFinal ? [...this.subtitleState.history, current] : this.subtitleState.history;
-    const { current: _current, ...state } = this.subtitleState;
-
-    this.subtitleState = isFinal ? { ...state, history } : { ...state, current, history };
-
-    this.emit("subtitle", this.subtitleState);
 
     if (isFinal) {
-      this.currentSegmentId = randomUUID();
       this.sourceText = "";
       this.translatedText = "";
     }
+  }
+
+  private isLikelyTargetLanguage(text: string): boolean {
+    if (this.targetLanguage !== "zh") {
+      return true;
+    }
+
+    return isLikelyChineseTranslation(text);
   }
 
   private sendJson(payload: unknown): void {
@@ -274,27 +272,105 @@ function isFinalEvent(type: string | undefined): boolean {
   return Boolean(type?.endsWith(".done") || type?.endsWith(".completed") || type === "response.done");
 }
 
-function pickText(payload: Record<string, unknown>, keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = readString(payload, key);
+function isLikelyChineseTranslation(text: string): boolean {
+  const visibleText = text.trim();
 
-    if (value) {
-      return value;
-    }
+  if (!visibleText) {
+    return false;
+  }
+
+  const hanCount = countMatches(visibleText, /[\u3400-\u9fff]/g);
+
+  if (hanCount > 0) {
+    return true;
+  }
+
+  const latinCount = countMatches(visibleText, /[A-Za-z]/g);
+  const meaningfulCount = countMatches(visibleText, /[\p{L}\p{N}]/gu);
+
+  return meaningfulCount > 0 && latinCount / meaningfulCount < 0.35;
+}
+
+type PickedText = {
+  text: string;
+  mode: "snapshot" | "delta";
+};
+
+function pickSourceTranscriptText(payload: Record<string, unknown>, type: string | undefined): PickedText | undefined {
+  const transcript = readString(payload, "transcript");
+
+  if (transcript) {
+    return { text: transcript, mode: type?.includes(".delta") ? "delta" : "snapshot" };
+  }
+
+  const stash = readString(payload, "stash");
+
+  if (stash) {
+    return { text: stash, mode: "snapshot" };
+  }
+
+  if (!isSourceTranscriptEvent(type)) {
+    return undefined;
+  }
+
+  const text = readString(payload, "text");
+
+  if (text) {
+    return { text, mode: type?.includes(".delta") ? "delta" : "snapshot" };
+  }
+
+  const delta = readString(payload, "delta");
+
+  if (delta) {
+    return { text: delta, mode: "delta" };
   }
 
   return undefined;
 }
 
-function pickCompositeText(payload: Record<string, unknown>, keys: string[]): string | undefined {
-  const text = pickText(payload, keys);
-  const stash = readString(payload, "stash");
+function pickTranslationText(payload: Record<string, unknown>, type: string | undefined): PickedText | undefined {
+  const nestedText =
+    pickNestedText(payload, [
+      ["translation"],
+      ["output", "translation"],
+      ["response", "translation"],
+      ["response", "audio_transcript", "text"],
+      ["response", "text"]
+    ]);
 
-  if (text && stash && text !== stash) {
-    return `${text}${stash}`;
+  if (nestedText) {
+    return { text: nestedText, mode: "snapshot" };
   }
 
-  return text ?? stash;
+  const text = readString(payload, "text");
+
+  if (text) {
+    return { text, mode: "snapshot" };
+  }
+
+  const delta = readString(payload, "delta");
+
+  if (delta) {
+    return { text: delta, mode: type?.includes(".delta") ? "delta" : "snapshot" };
+  }
+
+  return undefined;
+}
+
+function countMatches(text: string, pattern: RegExp): number {
+  return text.match(pattern)?.length ?? 0;
+}
+
+function mergeText(currentText: string, nextText: string, mode: "snapshot" | "delta"): string {
+  if (mode === "snapshot") {
+    return nextText;
+  }
+
+  if (!currentText || currentText.endsWith(nextText)) {
+    return currentText || nextText;
+  }
+
+  return `${currentText}${nextText}`;
 }
 
 function pickNestedText(payload: Record<string, unknown>, paths: string[][]): string | undefined {

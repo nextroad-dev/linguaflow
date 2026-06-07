@@ -1,12 +1,15 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { AudioChunkMessage, SubtitleState } from "@protocol";
+import { AudioSentenceSegmenter, type AudioSentenceSegmentationOptions } from "./audio-sentence-segmenter";
 import { QwenProvider, type QwenProviderOptions } from "./qwen-provider";
 import { SidecarManager, type SidecarManagerOptions } from "./sidecar-bridge";
+import { SubtitleAssembler } from "./subtitle-assembler";
 
 export type RealtimePipelineOptions = {
   sidecar?: SidecarManagerOptions;
   qwen?: QwenProviderOptions;
+  segmentation?: AudioSentenceSegmentationOptions;
 };
 
 type RealtimePipelineEvents = {
@@ -25,13 +28,35 @@ export class RealtimePipeline extends EventEmitter {
   public readonly qwen: QwenProvider;
   private isRunning = false;
   private qwenReady = false;
-  private readonly pendingAudioFrames: string[] = [];
+  private readonly pendingAudioChunks: AudioChunkMessage[] = [];
+  private readonly segmenter: AudioSentenceSegmenter;
+  private readonly subtitleAssembler: SubtitleAssembler;
 
   constructor(options: RealtimePipelineOptions = {}) {
     super();
 
     this.sidecar = new SidecarManager(options.sidecar);
     this.qwen = new QwenProvider(options.qwen);
+    this.subtitleAssembler = new SubtitleAssembler(
+      {
+        sourceLanguage: this.qwen.getSourceLanguage(),
+        targetLanguage: this.qwen.getTargetLanguage()
+      },
+      (state) => {
+        this.broadcastSubtitle(state);
+      }
+    );
+    this.segmenter = new AudioSentenceSegmenter(
+      {
+        sendAudio: (base64Data) => {
+          this.qwen.sendAudio(base64Data);
+        },
+        commitAudio: () => {
+          this.qwen.commitAudio();
+        }
+      },
+      options.segmentation
+    );
 
     this.sidecar.on("message", (message) => {
       if (message.type === "audio.chunk") {
@@ -50,6 +75,7 @@ export class RealtimePipeline extends EventEmitter {
     });
 
     this.qwen.on("open", () => {
+      this.subtitleAssembler.setListening(true);
       this.emit("status", "[qwen] connected");
     });
 
@@ -60,11 +86,13 @@ export class RealtimePipeline extends EventEmitter {
     });
 
     this.qwen.on("error", (error) => {
+      this.subtitleAssembler.setError(error.message);
       this.emit("status", `[qwen] error: ${error.message}`);
     });
 
     this.qwen.on("close", (code, reason) => {
       this.qwenReady = false;
+      this.subtitleAssembler.setListening(false);
       this.emit("status", `[qwen] closed: code=${code} reason=${reason || "none"}`);
     });
 
@@ -76,8 +104,8 @@ export class RealtimePipeline extends EventEmitter {
       }
     });
 
-    this.qwen.on("subtitle", (state) => {
-      this.broadcastSubtitle(state);
+    this.qwen.on("text", (event) => {
+      this.subtitleAssembler.applyTextEvent(event);
     });
   }
 
@@ -100,15 +128,19 @@ export class RealtimePipeline extends EventEmitter {
 
     this.isRunning = false;
     this.qwenReady = false;
-    this.pendingAudioFrames.length = 0;
+    this.pendingAudioChunks.length = 0;
     this.emit("status", "stopping realtime pipeline");
     this.stopCapture();
+    this.flushActiveSentence();
     this.qwen.close();
+    this.segmenter.reset();
+    this.subtitleAssembler.flush();
   }
 
   dispose(): void {
     this.qwen.close();
     this.sidecar.stop();
+    this.subtitleAssembler.dispose();
   }
 
   onSubtitleUpdate(listener: (state: SubtitleState) => void): void {
@@ -136,25 +168,45 @@ export class RealtimePipeline extends EventEmitter {
     }
 
     if (!this.qwenReady) {
-      this.pendingAudioFrames.push(message.dataBase64);
+      this.pendingAudioChunks.push(message);
 
-      if (this.pendingAudioFrames.length > 50) {
-        this.pendingAudioFrames.shift();
+      if (this.pendingAudioChunks.length > 50) {
+        this.pendingAudioChunks.shift();
       }
 
       return;
     }
 
-    this.qwen.sendAudio(message.dataBase64);
+    const boundary = this.segmenter.handleChunk(message);
+
+    if (boundary) {
+      this.subtitleAssembler.applySentenceBoundary(boundary.reason);
+      this.emit(
+        "status",
+        `[segment] committed reason=${boundary.reason} duration=${boundary.segmentDurationMs}ms silence=${boundary.trailingSilenceMs}ms`
+      );
+    }
   }
 
   private flushPendingAudio(): void {
-    while (this.pendingAudioFrames.length > 0) {
-      const frame = this.pendingAudioFrames.shift();
+    while (this.pendingAudioChunks.length > 0) {
+      const chunk = this.pendingAudioChunks.shift();
 
-      if (frame) {
-        this.qwen.sendAudio(frame);
+      if (chunk) {
+        this.handleAudioChunk(chunk);
       }
+    }
+  }
+
+  private flushActiveSentence(): void {
+    const boundary = this.segmenter.flush();
+
+    if (boundary) {
+      this.subtitleAssembler.applySentenceBoundary(boundary.reason);
+      this.emit(
+        "status",
+        `[segment] committed reason=${boundary.reason} duration=${boundary.segmentDurationMs}ms silence=${boundary.trailingSilenceMs}ms`
+      );
     }
   }
 

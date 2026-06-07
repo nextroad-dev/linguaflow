@@ -1,7 +1,21 @@
 import { BrowserWindow, ipcMain } from "electron";
 import type { SubtitleState } from "@protocol";
 import type { RealtimePipeline } from "./realtime-pipeline";
-import { loadSettings, maskSecret, saveSettings } from "./settings-store";
+import {
+  loadSettings,
+  maskSecret,
+  normalizeSubtitleBackgroundOpacity,
+  normalizeSubtitleDisplayMode,
+  normalizeSubtitleFontSize,
+  normalizeSubtitlePosition,
+  normalizeSubtitleTheme,
+  saveSettings,
+  type AppSettings,
+  type SubtitleDisplayMode,
+  type SubtitleFontSize,
+  type SubtitlePosition,
+  type SubtitleTheme
+} from "./settings-store";
 
 let translationEnabled = false;
 
@@ -19,21 +33,44 @@ export function registerIpcHandlers(pipeline: RealtimePipeline): void {
 
   ipcMain.handle("settings:get", () => {
     const currentSettings = loadSettings();
-
-    return {
-      hasDashscopeApiKey: Boolean(currentSettings.dashscopeApiKey),
-      maskedDashscopeApiKey: maskSecret(currentSettings.dashscopeApiKey),
-      dashscopeRegion: currentSettings.dashscopeRegion ?? "cn"
-    };
+    return serializeSettings(currentSettings);
   });
 
-  ipcMain.handle("settings:save", (_event, nextSettings: { dashscopeApiKey?: string; dashscopeRegion?: "cn" | "intl" }) => {
+  ipcMain.handle("settings:save", (_event, nextSettings: SaveSettingsPayload) => {
     const currentSettings = loadSettings();
     const dashscopeApiKey = nextSettings.dashscopeApiKey?.trim();
-    const dashscopeRegion: "cn" | "intl" = nextSettings.dashscopeRegion === "intl" ? "intl" : "cn";
-    const mergedSettings = dashscopeApiKey
-      ? { ...currentSettings, dashscopeApiKey, dashscopeRegion }
-      : { ...currentSettings, dashscopeRegion };
+    const dashscopeRegion: "cn" | "intl" =
+      nextSettings.dashscopeRegion === "intl" || nextSettings.dashscopeRegion === "cn"
+        ? nextSettings.dashscopeRegion
+        : currentSettings.dashscopeRegion ?? "cn";
+    const mergedSettings: AppSettings = {
+      ...currentSettings,
+      dashscopeRegion,
+      subtitleTheme:
+        nextSettings.subtitleTheme === undefined
+          ? normalizeSubtitleTheme(currentSettings.subtitleTheme)
+          : normalizeSubtitleTheme(nextSettings.subtitleTheme),
+      subtitlePosition:
+        nextSettings.subtitlePosition === undefined
+          ? normalizeSubtitlePosition(currentSettings.subtitlePosition)
+          : normalizeSubtitlePosition(nextSettings.subtitlePosition),
+      subtitleDisplayMode:
+        nextSettings.subtitleDisplayMode === undefined
+          ? normalizeSubtitleDisplayMode(currentSettings.subtitleDisplayMode)
+          : normalizeSubtitleDisplayMode(nextSettings.subtitleDisplayMode),
+      subtitleFontSize:
+        nextSettings.subtitleFontSize === undefined
+          ? normalizeSubtitleFontSize(currentSettings.subtitleFontSize)
+          : normalizeSubtitleFontSize(nextSettings.subtitleFontSize),
+      subtitleBackgroundOpacity:
+        nextSettings.subtitleBackgroundOpacity === undefined
+          ? normalizeSubtitleBackgroundOpacity(currentSettings.subtitleBackgroundOpacity)
+          : normalizeSubtitleBackgroundOpacity(nextSettings.subtitleBackgroundOpacity)
+    };
+
+    if (dashscopeApiKey) {
+      mergedSettings.dashscopeApiKey = dashscopeApiKey;
+    }
 
     saveSettings(mergedSettings);
 
@@ -42,11 +79,9 @@ export function registerIpcHandlers(pipeline: RealtimePipeline): void {
     }
     pipeline.setQwenRegion(mergedSettings.dashscopeRegion ?? "cn");
 
-    return {
-      hasDashscopeApiKey: Boolean(mergedSettings.dashscopeApiKey),
-      maskedDashscopeApiKey: maskSecret(mergedSettings.dashscopeApiKey),
-      dashscopeRegion: mergedSettings.dashscopeRegion ?? "cn"
-    };
+    const serializedSettings = serializeSettings(mergedSettings);
+    broadcastSettings(serializedSettings);
+    return serializedSettings;
   });
 
   ipcMain.on("toggle-translation", (event, enabled?: boolean) => {
@@ -82,5 +117,45 @@ export function registerIpcHandlers(pipeline: RealtimePipeline): void {
 export function sendSubtitleState(state: SubtitleState): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send("subtitle-update", state);
+  }
+}
+
+type SaveSettingsPayload = {
+  dashscopeApiKey?: string;
+  dashscopeRegion?: "cn" | "intl";
+  subtitleTheme?: SubtitleTheme;
+  subtitlePosition?: SubtitlePosition;
+  subtitleDisplayMode?: SubtitleDisplayMode;
+  subtitleFontSize?: SubtitleFontSize;
+  subtitleBackgroundOpacity?: number;
+};
+
+type SerializedSettings = {
+  hasDashscopeApiKey: boolean;
+  maskedDashscopeApiKey: string;
+  dashscopeRegion: "cn" | "intl";
+  subtitleTheme: SubtitleTheme;
+  subtitlePosition: SubtitlePosition;
+  subtitleDisplayMode: SubtitleDisplayMode;
+  subtitleFontSize: SubtitleFontSize;
+  subtitleBackgroundOpacity: number;
+};
+
+function serializeSettings(settings: AppSettings): SerializedSettings {
+  return {
+    hasDashscopeApiKey: Boolean(settings.dashscopeApiKey),
+    maskedDashscopeApiKey: maskSecret(settings.dashscopeApiKey),
+    dashscopeRegion: settings.dashscopeRegion ?? "cn",
+    subtitleTheme: normalizeSubtitleTheme(settings.subtitleTheme),
+    subtitlePosition: normalizeSubtitlePosition(settings.subtitlePosition),
+    subtitleDisplayMode: normalizeSubtitleDisplayMode(settings.subtitleDisplayMode),
+    subtitleFontSize: normalizeSubtitleFontSize(settings.subtitleFontSize),
+    subtitleBackgroundOpacity: normalizeSubtitleBackgroundOpacity(settings.subtitleBackgroundOpacity)
+  };
+}
+
+function broadcastSettings(settings: SerializedSettings): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send("settings-updated", settings);
   }
 }

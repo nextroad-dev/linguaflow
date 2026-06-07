@@ -65,6 +65,7 @@ export type SubtitleState = {
   isListening: boolean;
   sourceLanguage?: string;
   targetLanguage?: string;
+  visible?: SubtitleSegment;
   current?: SubtitleSegment;
   history: SubtitleSegment[];
   lastError?: string;

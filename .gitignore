@@ -1,0 +1,50 @@
+# Docs and local research notes
+/doc/*
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# pnpm
+.pnpm-store/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Electron / Vite outputs
+dist/
+out/
+dist-electron/
+release/
+build/
+*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# Test/browser artifacts
+.playwright-cli/
+
+# .NET
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+*.rsuser
+
+# IDEs and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
