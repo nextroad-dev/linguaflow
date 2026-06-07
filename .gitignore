@@ -26,8 +26,11 @@ out/
 dist-electron/
 release/
 build/
+!apps/desktop/build/
+!apps/desktop/build/icon.png
+!apps/desktop/build/icon.ico
 *.local
-
+.gitignore
 # TypeScript
 *.tsbuildinfo
 

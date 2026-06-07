@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { AudioChunkMessage, SubtitleState } from "@protocol";
 import { AudioSentenceSegmenter, type AudioSentenceSegmentationOptions } from "./audio-sentence-segmenter";
-import { QwenProvider, type QwenProviderOptions } from "./qwen-provider";
+import { QwenProvider, type QwenProviderOptions, type QwenRealtimeOptions } from "./qwen-provider";
 import { SidecarManager, type SidecarManagerOptions } from "./sidecar-bridge";
 import { SubtitleAssembler } from "./subtitle-assembler";
 
@@ -15,6 +15,14 @@ export type RealtimePipelineOptions = {
 type RealtimePipelineEvents = {
   subtitle: [state: SubtitleState];
   status: [message: string];
+  voiceAudio: [event: VoiceAudioOutputEvent];
+};
+
+export type VoiceAudioOutputEvent = {
+  pcm16Base64: string;
+  sampleRate: 24000;
+  channels: 1;
+  receivedAtMs: number;
 };
 
 export declare interface RealtimePipeline {
@@ -107,6 +115,12 @@ export class RealtimePipeline extends EventEmitter {
     this.qwen.on("text", (event) => {
       this.subtitleAssembler.applyTextEvent(event);
     });
+
+    this.qwen.on("audio", (event) => {
+      if (this.qwen.getRealtimeOptions().enableVoiceOutput) {
+        this.emit("voiceAudio", event);
+      }
+    });
   }
 
   start(): void {
@@ -116,6 +130,13 @@ export class RealtimePipeline extends EventEmitter {
 
     this.isRunning = true;
     this.emit("status", "starting realtime pipeline");
+
+    if (!this.qwen.getRealtimeOptions().enableQwenRealtime) {
+      this.isRunning = false;
+      this.emit("status", "[qwen] disabled");
+      throw new Error("Qwen Realtime is disabled");
+    }
+
     this.qwen.connect();
     this.sidecar.start();
     this.startCapture();
@@ -157,6 +178,22 @@ export class RealtimePipeline extends EventEmitter {
 
   setQwenRegion(region: "cn" | "intl"): void {
     this.qwen.setRegion(region);
+  }
+
+  setQwenRealtimeEnabled(enabled: boolean): void {
+    this.qwen.setRealtimeOptions({ enableQwenRealtime: enabled });
+  }
+
+  setVoiceOutputEnabled(enabled: boolean): void {
+    this.qwen.setRealtimeOptions({ enableVoiceOutput: enabled });
+  }
+
+  setQwenRealtimeOptions(options: Partial<QwenRealtimeOptions>): void {
+    this.qwen.setRealtimeOptions(options);
+  }
+
+  onVoiceAudio(listener: (event: VoiceAudioOutputEvent) => void): void {
+    this.on("voiceAudio", listener);
   }
 
   private handleAudioChunk(message: AudioChunkMessage): void {
@@ -215,7 +252,7 @@ export class RealtimePipeline extends EventEmitter {
       direction: "main-to-sidecar",
       type: "control.start",
       requestId: randomUUID(),
-      sampleRate: 16000,
+      sampleRate: this.qwen.getRealtimeOptions().sampleRate,
       channels: 1,
       format: "pcm_s16le"
     });

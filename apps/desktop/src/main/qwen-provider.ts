@@ -8,6 +8,7 @@ type QwenProviderEvents = {
   close: [code: number, reason: string];
   error: [error: Error];
   text: [event: QwenSubtitleTextEvent];
+  audio: [event: QwenAudioOutputEvent];
   raw: [message: unknown];
 };
 
@@ -18,13 +19,51 @@ export type QwenSubtitleTextEvent = {
   receivedAtMs: number;
 };
 
+export type QwenAudioOutputEvent = {
+  pcm16Base64: string;
+  sampleRate: 24000;
+  channels: 1;
+  receivedAtMs: number;
+};
+
+export type QwenInputAudioFormat = "pcm" | "opus";
+export type QwenOutputAudioFormat = "pcm";
+export type QwenTurnDetectionType = "server_vad" | "semantic_vad";
+export type QwenVoiceCloneFrequency = "never" | "once" | "always";
+
+export type QwenTurnDetectionOptions = {
+  type: QwenTurnDetectionType;
+  threshold: number;
+  silence_duration_ms: number;
+};
+
+export type QwenRealtimeOptions = {
+  enableQwenRealtime: boolean;
+  enableVoiceOutput: boolean;
+  voice?: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  sampleRate: number;
+  inputAudioFormat: QwenInputAudioFormat;
+  outputAudioFormat: QwenOutputAudioFormat;
+  turnDetection: QwenTurnDetectionOptions;
+  phrases?: Record<string, string>;
+  enableVoiceClone?: boolean;
+  voiceCloneFrequency?: QwenVoiceCloneFrequency;
+};
+
+export type QwenSessionUpdate = {
+  event_id: string;
+  type: "session.update";
+  session: Record<string, unknown>;
+};
+
 export type QwenProviderOptions = {
   apiKey?: string;
   model?: string;
   url?: string;
   region?: "cn" | "intl";
-  sourceLanguage?: string;
-  targetLanguage?: string;
+  realtime?: Partial<QwenRealtimeOptions>;
 };
 
 export declare interface QwenProvider {
@@ -43,8 +82,7 @@ export class QwenProvider extends EventEmitter {
   private apiKey: string;
   private readonly model: string;
   private url: string;
-  private readonly sourceLanguage: string;
-  private readonly targetLanguage: string;
+  private realtimeOptions: QwenRealtimeOptions;
 
   constructor(options: QwenProviderOptions = {}) {
     super();
@@ -55,16 +93,19 @@ export class QwenProvider extends EventEmitter {
       options.url ??
       process.env.QWEN_REALTIME_URL ??
       getRealtimeEndpoint(options.region ?? readRegionFromEnv() ?? "cn");
-    this.sourceLanguage = options.sourceLanguage ?? "auto";
-    this.targetLanguage = options.targetLanguage ?? "zh";
+    this.realtimeOptions = normalizeRealtimeOptions(options.realtime);
   }
 
   getSourceLanguage(): string {
-    return this.sourceLanguage;
+    return this.realtimeOptions.sourceLanguage;
   }
 
   getTargetLanguage(): string {
-    return this.targetLanguage;
+    return this.realtimeOptions.targetLanguage;
+  }
+
+  getRealtimeOptions(): QwenRealtimeOptions {
+    return this.realtimeOptions;
   }
 
   connect(): void {
@@ -92,6 +133,10 @@ export class QwenProvider extends EventEmitter {
 
     this.ws.on("message", (data) => {
       this.handleMessage(data);
+    });
+
+    this.ws.on("unexpected-response", (_request, response) => {
+      this.emit("error", new Error(`Qwen realtime WebSocket rejected connection: HTTP ${response.statusCode}`));
     });
 
     this.ws.on("error", (error) => {
@@ -125,6 +170,17 @@ export class QwenProvider extends EventEmitter {
     this.url = getRealtimeEndpoint(region);
   }
 
+  setRealtimeOptions(options: Partial<QwenRealtimeOptions>): void {
+    this.realtimeOptions = normalizeRealtimeOptions({
+      ...this.realtimeOptions,
+      ...options
+    });
+
+    if (this.ws?.readyState === WebSocket.OPEN && this.sessionReady) {
+      this.configureSession();
+    }
+  }
+
   sendAudio(base64Data: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.sessionReady) {
       return;
@@ -140,34 +196,11 @@ export class QwenProvider extends EventEmitter {
   }
 
   commitAudio(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.sessionReady) {
-      return;
-    }
-
-    this.sendJson({
-      event_id: randomUUID(),
-      type: "input_audio_buffer.commit"
-    });
+    // Qwen semantic VAD controls turn boundaries; audio is streamed with append events only.
   }
 
   private configureSession(): void {
-    this.sendJson({
-      event_id: randomUUID(),
-      type: "session.update",
-      session: {
-        modalities: ["text"],
-        input_audio_format: "pcm",
-        output_audio_format: "pcm",
-        input_audio_transcription: {
-          model: "qwen3-asr-flash-realtime",
-          language: this.sourceLanguage === "auto" ? "en" : this.sourceLanguage
-        },
-        translation: {
-          language: this.targetLanguage
-        },
-        turn_detection: null
-      }
-    });
+    this.sendJson(buildSessionUpdate(this.realtimeOptions));
   }
 
   private handleMessage(data: WebSocket.RawData): void {
@@ -182,6 +215,7 @@ export class QwenProvider extends EventEmitter {
 
     this.emit("raw", payload);
     this.handleControlEvent(payload);
+    this.applyAudioDelta(payload);
     this.applySubtitleDelta(payload);
   }
 
@@ -220,7 +254,7 @@ export class QwenProvider extends EventEmitter {
       changed = true;
     }
 
-    if (isTranslationEvent(type) && translation && this.isLikelyTargetLanguage(translation.text)) {
+    if (isTranslationEvent(type) && translation) {
       this.translatedText = mergeText(this.translatedText, translation.text, translation.mode);
       changed = true;
     }
@@ -245,12 +279,29 @@ export class QwenProvider extends EventEmitter {
     }
   }
 
-  private isLikelyTargetLanguage(text: string): boolean {
-    if (this.targetLanguage !== "zh") {
-      return true;
+  private applyAudioDelta(payload: unknown): void {
+    if (!isRecord(payload)) {
+      return;
     }
 
-    return isLikelyChineseTranslation(text);
+    const type = readString(payload, "type");
+
+    if (type !== "response.audio.delta") {
+      return;
+    }
+
+    const delta = readString(payload, "delta");
+
+    if (!delta) {
+      return;
+    }
+
+    this.emit("audio", {
+      pcm16Base64: delta,
+      sampleRate: 24000,
+      channels: 1,
+      receivedAtMs: Date.now()
+    });
   }
 
   private sendJson(payload: unknown): void {
@@ -260,35 +311,171 @@ export class QwenProvider extends EventEmitter {
   }
 }
 
+export function buildSessionUpdate(options: QwenRealtimeOptions): QwenSessionUpdate {
+  const normalizedOptions = normalizeRealtimeOptions(options);
+  const session: Record<string, unknown> = {
+    modalities: buildOutputModalities(normalizedOptions),
+    instructions:
+      `You are a realtime interpreter. Translate the user's speech into ${normalizedOptions.targetLanguage} naturally and concisely. Do not answer questions or add explanations. Only output the translation. Use a natural tone, slightly fast pace, suitable for simultaneous interpreting.`,
+    input_audio_format: normalizedOptions.inputAudioFormat,
+    output_audio_format: normalizedOptions.outputAudioFormat,
+    input_audio_transcription: {
+      model: "qwen3-asr-flash-realtime",
+      language: normalizedOptions.sourceLanguage
+    },
+    translation: buildTranslationOptions(normalizedOptions),
+    turn_detection: normalizedOptions.turnDetection
+  };
+
+  if (normalizedOptions.enableVoiceOutput || normalizedOptions.enableVoiceClone) {
+    const voice = resolveVoice(normalizedOptions);
+
+    if (voice) {
+      session.voice = voice;
+    }
+  }
+
+  if (normalizedOptions.enableVoiceClone) {
+    const frequency = normalizedOptions.voiceCloneFrequency ?? "never";
+    session.enable_voice_clone = true;
+    session.voice_clone_options = { frequency };
+
+    if (frequency === "once" || frequency === "always") {
+      session.voice = "default";
+    }
+  }
+
+  return {
+    event_id: randomUUID(),
+    type: "session.update",
+    session
+  };
+}
+
+function buildTranslationOptions(options: QwenRealtimeOptions): Record<string, unknown> {
+  const translation: Record<string, unknown> = {
+    language: options.targetLanguage
+  };
+  const phrases = normalizePhrases(options.phrases);
+
+  if (Object.keys(phrases).length > 0) {
+    translation.corpus = {
+      phrases
+    };
+  }
+
+  return translation;
+}
+
+function buildOutputModalities(options: QwenRealtimeOptions): string[] {
+  const modalities = ["text"];
+
+  if (options.enableVoiceOutput) {
+    modalities.push("audio");
+  }
+
+  return modalities;
+}
+
+export function normalizeRealtimeOptions(options: Partial<QwenRealtimeOptions> = {}): QwenRealtimeOptions {
+  return {
+    enableQwenRealtime: readBoolean(options.enableQwenRealtime, true),
+    enableVoiceOutput: readBoolean(options.enableVoiceOutput, false),
+    voice: normalizeOptionalString(options.voice),
+    sourceLanguage: normalizeLanguage(options.sourceLanguage, "en"),
+    targetLanguage: normalizeLanguage(options.targetLanguage, "zh"),
+    sampleRate: normalizeSampleRate(options.sampleRate),
+    inputAudioFormat: options.inputAudioFormat === "opus" ? "opus" : "pcm",
+    outputAudioFormat: "pcm",
+    turnDetection: normalizeTurnDetection(options.turnDetection),
+    phrases: normalizePhrases(options.phrases),
+    enableVoiceClone: readBoolean(options.enableVoiceClone, false),
+    voiceCloneFrequency: normalizeVoiceCloneFrequency(options.voiceCloneFrequency)
+  };
+}
+
+function normalizeTurnDetection(value: Partial<QwenTurnDetectionOptions> | undefined): QwenTurnDetectionOptions {
+  return {
+    type: value?.type === "server_vad" ? "server_vad" : "semantic_vad",
+    threshold: normalizeNumber(value?.threshold, 0.5, 0, 1),
+    silence_duration_ms: Math.round(normalizeNumber(value?.silence_duration_ms, 800, 0, 5000))
+  };
+}
+
+function normalizePhrases(value: unknown): Record<string, string> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const phrases: Record<string, string> = {};
+
+  for (const [source, target] of Object.entries(value)) {
+    if (source.trim() && typeof target === "string" && target.trim()) {
+      phrases[source.trim()] = target.trim();
+    }
+  }
+
+  return phrases;
+}
+
+function resolveVoice(options: QwenRealtimeOptions): string | undefined {
+  if (options.enableVoiceClone) {
+    const frequency = options.voiceCloneFrequency ?? "never";
+    return frequency === "never" ? options.voice || process.env.QWEN_REALTIME_VOICE : "default";
+  }
+
+  return options.voice || process.env.QWEN_REALTIME_VOICE || undefined;
+}
+
+function normalizeVoiceCloneFrequency(value: unknown): QwenVoiceCloneFrequency {
+  return value === "once" || value === "always" || value === "never" ? value : "never";
+}
+
+function normalizeSampleRate(value: unknown): number {
+  const sampleRate = normalizeNumber(value, 16000, 8000, 48000);
+  return Math.round(sampleRate);
+}
+
+function normalizeNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeString(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function normalizeLanguage(value: unknown, fallback: string): string {
+  const language = normalizeString(value, fallback);
+  return ["zh", "en", "ja", "ko", "fr", "de", "es", "it", "pt", "ru", "ar"].includes(language) ? language : fallback;
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 function isSourceTranscriptEvent(type: string | undefined): boolean {
-  return Boolean(type?.includes("transcription") || type?.includes("transcript"));
+  return Boolean(type?.startsWith("conversation.item.input_audio_transcription"));
 }
 
 function isTranslationEvent(type: string | undefined): boolean {
-  return Boolean(type?.includes("response.") || type?.includes("translation") || type?.includes("audio_transcript"));
+  return Boolean(
+    type === "response.done" ||
+      type?.startsWith("response.audio_transcript") ||
+      type?.startsWith("response.text") ||
+      type?.includes("translation")
+  );
 }
 
 function isFinalEvent(type: string | undefined): boolean {
-  return Boolean(type?.endsWith(".done") || type?.endsWith(".completed") || type === "response.done");
-}
-
-function isLikelyChineseTranslation(text: string): boolean {
-  const visibleText = text.trim();
-
-  if (!visibleText) {
-    return false;
-  }
-
-  const hanCount = countMatches(visibleText, /[\u3400-\u9fff]/g);
-
-  if (hanCount > 0) {
-    return true;
-  }
-
-  const latinCount = countMatches(visibleText, /[A-Za-z]/g);
-  const meaningfulCount = countMatches(visibleText, /[\p{L}\p{N}]/gu);
-
-  return meaningfulCount > 0 && latinCount / meaningfulCount < 0.35;
+  return Boolean(type === "response.done" || type?.endsWith(".completed") || type === "response.audio_transcript.done");
 }
 
 type PickedText = {
@@ -299,14 +486,18 @@ type PickedText = {
 function pickSourceTranscriptText(payload: Record<string, unknown>, type: string | undefined): PickedText | undefined {
   const transcript = readString(payload, "transcript");
 
-  if (transcript) {
-    return { text: transcript, mode: type?.includes(".delta") ? "delta" : "snapshot" };
+  if (isFinalEvent(type) && transcript) {
+    return { text: transcript, mode: "snapshot" };
   }
 
-  const stash = readString(payload, "stash");
+  const textWithStash = readTextWithStash(payload);
 
-  if (stash) {
-    return { text: stash, mode: "snapshot" };
+  if (textWithStash) {
+    return { text: textWithStash, mode: "snapshot" };
+  }
+
+  if (transcript) {
+    return { text: transcript, mode: "snapshot" };
   }
 
   if (!isSourceTranscriptEvent(type)) {
@@ -329,6 +520,18 @@ function pickSourceTranscriptText(payload: Record<string, unknown>, type: string
 }
 
 function pickTranslationText(payload: Record<string, unknown>, type: string | undefined): PickedText | undefined {
+  const transcript = readString(payload, "transcript");
+
+  if (isFinalEvent(type) && transcript) {
+    return { text: transcript, mode: "snapshot" };
+  }
+
+  const textWithStash = readTextWithStash(payload);
+
+  if (textWithStash && isTranslationEvent(type)) {
+    return { text: textWithStash, mode: "snapshot" };
+  }
+
   const nestedText =
     pickNestedText(payload, [
       ["translation"],
@@ -348,6 +551,10 @@ function pickTranslationText(payload: Record<string, unknown>, type: string | un
     return { text, mode: "snapshot" };
   }
 
+  if (transcript) {
+    return { text: transcript, mode: "snapshot" };
+  }
+
   const delta = readString(payload, "delta");
 
   if (delta) {
@@ -355,10 +562,6 @@ function pickTranslationText(payload: Record<string, unknown>, type: string | un
   }
 
   return undefined;
-}
-
-function countMatches(text: string, pattern: RegExp): number {
-  return text.match(pattern)?.length ?? 0;
 }
 
 function mergeText(currentText: string, nextText: string, mode: "snapshot" | "delta"): string {
@@ -371,6 +574,17 @@ function mergeText(currentText: string, nextText: string, mode: "snapshot" | "de
   }
 
   return `${currentText}${nextText}`;
+}
+
+function readTextWithStash(payload: Record<string, unknown>): string | undefined {
+  const text = readString(payload, "text");
+  const stash = readString(payload, "stash");
+
+  if (text === undefined && stash === undefined) {
+    return undefined;
+  }
+
+  return `${text ?? ""}${stash ?? ""}`;
 }
 
 function pickNestedText(payload: Record<string, unknown>, paths: string[][]): string | undefined {
