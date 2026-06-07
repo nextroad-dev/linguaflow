@@ -1,0 +1,19 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "include": [
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.vue",
+    "src/renderer/src/env.d.ts",
+    "../../packages/protocol/src/**/*"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "baseUrl": ".",
+    "types": ["vite/client"],
+    "paths": {
+      "@renderer/*": ["src/renderer/src/*"],
+      "@protocol": ["../../packages/protocol/src/index.ts"],
+      "@protocol/*": ["../../packages/protocol/src/*"]
+    }
+  }
+}
