@@ -1,0 +1,120 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v1.2.3 or 1.2.3"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows zip
+    runs-on: windows-latest
+
+    env:
+      APP_NAME: LinguaFlow
+      DESKTOP_PACKAGE: ai-live-interpreter-desktop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $rawVersion = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "${{ inputs.version }}"
+          } else {
+            "${{ github.ref_name }}"
+          }
+
+          $tag = if ($rawVersion.StartsWith("v")) { $rawVersion } else { "v$rawVersion" }
+          $version = $tag.TrimStart("v")
+
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ZIP_NAME=$env:APP_NAME-$tag-win-x64.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stamp package version
+        shell: pwsh
+        run: |
+          $packagePath = "apps/desktop/package.json"
+          $packageJson = Get-Content $packagePath -Raw | ConvertFrom-Json
+          $packageJson.version = $env:APP_VERSION
+          $packageJson | ConvertTo-Json -Depth 20 | Set-Content $packagePath -Encoding UTF8
+
+      - name: Build sidecar
+        run: pnpm --filter $env:DESKTOP_PACKAGE build:sidecar
+
+      - name: Build desktop app
+        run: pnpm --filter $env:DESKTOP_PACKAGE build
+
+      - name: Package unpacked Windows app
+        run: pnpm --filter $env:DESKTOP_PACKAGE exec electron-builder --win --x64 --dir --publish never
+
+      - name: Create versioned zip
+        shell: pwsh
+        run: |
+          $source = "apps/desktop/release/win-unpacked/*"
+          $destination = "apps/desktop/release/$env:ZIP_NAME"
+
+          if (Test-Path $destination) {
+            Remove-Item $destination -Force
+          }
+
+          Compress-Archive -Path $source -DestinationPath $destination -CompressionLevel Optimal
+          "ZIP_PATH=$destination" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LinguaFlow-windows-x64
+          path: apps/desktop/release/*-win-x64.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseExists = $false
+
+          gh release view $env:RELEASE_TAG 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $releaseExists = $true
+          }
+
+          if ($releaseExists) {
+            gh release upload $env:RELEASE_TAG $env:ZIP_PATH --clobber
+          } else {
+            gh release create $env:RELEASE_TAG $env:ZIP_PATH `
+              --title "$env:APP_NAME $env:RELEASE_TAG" `
+              --notes "$env:APP_NAME Windows x64 压缩包构建。"
+          }

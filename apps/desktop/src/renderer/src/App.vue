@@ -106,12 +106,6 @@ const languageOptions = [
   { value: "ar", label: "العربية" }
 ];
 const targetLanguageOptions = languageOptions;
-const voiceCloneFrequencyLabels: Record<"never" | "once" | "always", string> = {
-  never: "不复刻",
-  once: "仅本次",
-  always: "每次更新"
-};
-
 const isOverlay = new URLSearchParams(window.location.search).get("overlay") === "1";
 const activeView = ref<AppView>("control");
 const sidebarCollapsed = ref(false);
@@ -339,6 +333,15 @@ async function saveAudioOutputSettings(nextSettings: {
 
 function toggleVoiceOutput(): void {
   void saveAudioOutputSettings({ voiceOutputEnabled: !voiceOutputEnabled.value });
+}
+
+function toggleVoiceClone(): void {
+  const nextEnabled = !qwenVoiceCloneEnabled.value;
+
+  void saveAudioOutputSettings({
+    qwenVoiceCloneEnabled: nextEnabled,
+    qwenVoiceCloneFrequency: nextEnabled ? "once" : "never"
+  });
 }
 
 function toggleLanguageSelect(selectId: LanguageSelectId): void {
@@ -1082,29 +1085,20 @@ onBeforeUnmount(() => {
             <div class="section-heading">
               <div>
                 <p class="section-title">声音复刻</p>
-                <h2>{{ qwenVoiceCloneEnabled ? voiceCloneFrequencyLabels[qwenVoiceCloneFrequency] : "关闭" }}</h2>
+                <h2>{{ qwenVoiceCloneEnabled ? "已启用" : "不复刻" }}</h2>
               </div>
             </div>
-            <div class="form-grid">
-              <label class="switch-row" :class="{ selected: qwenVoiceCloneEnabled }">
-                <input v-model="qwenVoiceCloneEnabled" type="checkbox" @change="saveAudioOutputForm" />
-                <span>
-                  <strong>启用声音复刻</strong>
-                  <small>使用当前音色设置生成更接近原声的语音。</small>
-                </span>
-              </label>
-              <label class="field-block">
-                <span>频率</span>
-                <select
-                  v-model="qwenVoiceCloneFrequency"
-                  :disabled="!qwenVoiceCloneEnabled"
-                  @change="saveAudioOutputForm"
-                >
-                  <option value="never">不复刻</option>
-                  <option value="once">仅本次</option>
-                  <option value="always">每次更新</option>
-                </select>
-              </label>
+            <div class="audio-feature-actions">
+              <button
+                class="audio-feature-command"
+                :class="{ active: qwenVoiceCloneEnabled }"
+                type="button"
+                :aria-pressed="qwenVoiceCloneEnabled"
+                @click="toggleVoiceClone"
+              >
+                {{ qwenVoiceCloneEnabled ? "关闭声音复刻" : "启用声音复刻" }}
+              </button>
+              <p>使用当前音色设置生成更接近原声的语音。</p>
             </div>
           </div>
         </section>

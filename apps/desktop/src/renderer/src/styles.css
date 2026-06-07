@@ -587,14 +587,16 @@ button:disabled:hover {
   transform: translateY(1px);
 }
 
-.voice-output-actions {
+.voice-output-actions,
+.audio-feature-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px 12px;
 }
 
-.voice-output-actions p {
+.voice-output-actions p,
+.audio-feature-actions p {
   min-width: 220px;
   flex: 1;
   margin: 0;
@@ -603,7 +605,8 @@ button:disabled:hover {
   line-height: 1.45;
 }
 
-.voice-output-command {
+.voice-output-command,
+.audio-feature-command {
   display: inline-flex;
   min-width: 132px;
   height: 34px;
@@ -625,29 +628,34 @@ button:disabled:hover {
     transform 120ms ease;
 }
 
-.voice-output-command:hover {
+.voice-output-command:hover,
+.audio-feature-command:hover {
   border-color: var(--color-brand-bg-hover);
   background: var(--color-brand-bg-hover);
 }
 
-.voice-output-command:active {
+.voice-output-command:active,
+.audio-feature-command:active {
   border-color: var(--color-brand-bg-pressed);
   background: var(--color-brand-bg-pressed);
   transform: translateY(1px);
 }
 
-.voice-output-command.active {
+.voice-output-command.active,
+.audio-feature-command.active {
   border-color: var(--color-neutral-stroke-1);
   color: var(--color-neutral-foreground-1);
   background: var(--color-neutral-bg-2);
 }
 
-.voice-output-command.active:hover {
+.voice-output-command.active:hover,
+.audio-feature-command.active:hover {
   border-color: var(--color-neutral-stroke-hover);
   background: var(--color-neutral-bg-hover);
 }
 
-.voice-output-command:focus-visible {
+.voice-output-command:focus-visible,
+.audio-feature-command:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
