@@ -1,0 +1,20 @@
+appId: com.ai-live-interpreter.desktop
+productName: AI Live Interpreter
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: ../audio-sidecar/bin/Release/net8.0/win-x64/publish/
+    to: audio-sidecar
+    filter:
+      - "**/*"
+win:
+  target:
+    - nsis
+    - zip
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

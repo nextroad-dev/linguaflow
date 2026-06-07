@@ -221,6 +221,41 @@ function getDefaultSidecarExecutablePath(): string {
   }
 
   const candidates = [
+    resolve(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "audio-sidecar",
+      "bin",
+      "Release",
+      "net8.0",
+      "win-x64",
+      "publish",
+      "AudioSidecar.exe"
+    ),
+    resolve(
+      process.cwd(),
+      "..",
+      "audio-sidecar",
+      "bin",
+      "Release",
+      "net8.0",
+      "win-x64",
+      "publish",
+      "AudioSidecar.exe"
+    ),
+    resolve(
+      process.cwd(),
+      "apps",
+      "audio-sidecar",
+      "bin",
+      "Release",
+      "net8.0",
+      "win-x64",
+      "publish",
+      "AudioSidecar.exe"
+    ),
     resolve(__dirname, "..", "..", "..", "audio-sidecar", "bin", "Release", "net8.0", "AudioSidecar.exe"),
     resolve(process.cwd(), "..", "audio-sidecar", "bin", "Release", "net8.0", "AudioSidecar.exe"),
     resolve(process.cwd(), "apps", "audio-sidecar", "bin", "Release", "net8.0", "AudioSidecar.exe")

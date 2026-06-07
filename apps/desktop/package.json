@@ -11,7 +11,10 @@
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build"
+    "build": "npm run typecheck && electron-vite build",
+    "build:sidecar": "dotnet publish ../audio-sidecar/AudioSidecar.csproj -c Release -r win-x64 --self-contained true",
+    "pack": "npm run build:sidecar && npm run build && electron-builder --dir",
+    "dist": "npm run build:sidecar && npm run build && electron-builder"
   },
   "dependencies": {
     "@ai-live-interpreter/protocol": "workspace:*",
@@ -27,6 +30,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^5.0.4",
     "electron": "^30.0.1",
+    "electron-builder": "^24.13.3",
     "electron-vite": "^2.2.0",
     "eslint": "^8.57.0",
     "eslint-plugin-vue": "^9.25.0",
