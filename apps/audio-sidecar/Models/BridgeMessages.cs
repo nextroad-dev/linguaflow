@@ -7,6 +7,8 @@ public static class BridgeMessageTypes
 {
     public const string AudioChunk = "audio.chunk";
     public const string Log = "log";
+    public const string StartCapture = "start_capture";
+    public const string StopCapture = "stop_capture";
     public const string ControlStart = "control.start";
     public const string ControlStop = "control.stop";
     public const string ControlShutdown = "control.shutdown";
