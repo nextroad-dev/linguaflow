@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron";
+import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { AudioChunkMessage, SubtitleState } from "@protocol";
 import { QwenProvider, type QwenProviderOptions } from "./qwen-provider";
@@ -9,11 +9,24 @@ export type RealtimePipelineOptions = {
   qwen?: QwenProviderOptions;
 };
 
-export class RealtimePipeline {
+type RealtimePipelineEvents = {
+  subtitle: [state: SubtitleState];
+};
+
+export declare interface RealtimePipeline {
+  on<K extends keyof RealtimePipelineEvents>(event: K, listener: (...args: RealtimePipelineEvents[K]) => void): this;
+  off<K extends keyof RealtimePipelineEvents>(event: K, listener: (...args: RealtimePipelineEvents[K]) => void): this;
+  emit<K extends keyof RealtimePipelineEvents>(event: K, ...args: RealtimePipelineEvents[K]): boolean;
+}
+
+export class RealtimePipeline extends EventEmitter {
   public readonly sidecar: SidecarManager;
   public readonly qwen: QwenProvider;
+  private isRunning = false;
 
   constructor(options: RealtimePipelineOptions = {}) {
+    super();
+
     this.sidecar = new SidecarManager(options.sidecar);
     this.qwen = new QwenProvider(options.qwen);
 
@@ -29,12 +42,22 @@ export class RealtimePipeline {
   }
 
   start(): void {
+    if (this.isRunning) {
+      return;
+    }
+
+    this.isRunning = true;
     this.qwen.connect();
     this.sidecar.start();
     this.startCapture();
   }
 
   stop(): void {
+    if (!this.isRunning) {
+      return;
+    }
+
+    this.isRunning = false;
     this.stopCapture();
     this.qwen.close();
   }
@@ -42,6 +65,10 @@ export class RealtimePipeline {
   dispose(): void {
     this.qwen.close();
     this.sidecar.stop();
+  }
+
+  onSubtitleUpdate(listener: (state: SubtitleState) => void): void {
+    this.on("subtitle", listener);
   }
 
   private handleAudioChunk(message: AudioChunkMessage): void {
@@ -72,8 +99,6 @@ export class RealtimePipeline {
   }
 
   private broadcastSubtitle(state: SubtitleState): void {
-    for (const window of BrowserWindow.getAllWindows()) {
-      window.webContents.send("subtitle:update", state);
-    }
+    this.emit("subtitle", state);
   }
 }

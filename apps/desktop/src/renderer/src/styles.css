@@ -1,0 +1,151 @@
+:root {
+  font-family:
+    "Microsoft YaHei UI",
+    "Segoe UI",
+    sans-serif;
+  color: #f6f7fb;
+  background: transparent;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+}
+
+.control-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background:
+    linear-gradient(135deg, rgba(12, 16, 24, 0.94), rgba(26, 36, 50, 0.9)),
+    radial-gradient(circle at 20% 20%, rgba(58, 170, 156, 0.18), transparent 34%),
+    #10141c;
+}
+
+.control-panel {
+  width: min(520px, calc(100vw - 48px));
+  padding: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #7dd3c7;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.status {
+  margin: 18px 0 28px;
+  color: rgba(246, 247, 251, 0.68);
+  font-size: 15px;
+}
+
+.status.active {
+  color: #80e6b8;
+}
+
+.toggle-button {
+  width: 100%;
+  height: 56px;
+  border: 0;
+  border-radius: 8px;
+  color: #07110f;
+  background: #88f0d0;
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.toggle-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 34px rgba(40, 230, 184, 0.24);
+}
+
+.toggle-button.active {
+  color: #fff;
+  background: #e8594f;
+}
+
+.overlay-shell {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  place-items: center;
+  padding: 16px 36px;
+  background: transparent;
+}
+
+.subtitle-card {
+  max-width: 100%;
+  padding: 18px 34px 20px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.58);
+  text-align: center;
+}
+
+.source-line,
+.translated-line {
+  margin: 0;
+  color: #fff;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.9),
+    0 0 18px rgba(0, 0, 0, 0.72);
+}
+
+.source-line {
+  font-size: 28px;
+  line-height: 1.24;
+}
+
+.translated-line {
+  margin-top: 8px;
+  font-size: 38px;
+  line-height: 1.18;
+}
+
+.subtitle-fade-enter-active,
+.subtitle-fade-leave-active {
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.subtitle-fade-enter-from,
+.subtitle-fade-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}

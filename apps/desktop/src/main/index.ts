@@ -1,5 +1,8 @@
 import { join } from "node:path";
 import { BrowserWindow, app } from "electron";
+import { registerIpcHandlers } from "./ipc-handlers";
+import { createOverlayWindow } from "./overlay-window";
+import { RealtimePipeline } from "./realtime-pipeline";
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -27,7 +30,11 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  const pipeline = new RealtimePipeline();
+  registerIpcHandlers(pipeline);
+
   createWindow();
+  createOverlayWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
