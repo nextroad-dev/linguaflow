@@ -10,8 +10,9 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "start": "electron-vite preview",
-    "dev": "electron-vite dev",
+    "dev": "npm run build:sidecar:dev && electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
+    "build:sidecar:dev": "dotnet build ../audio-sidecar/AudioSidecar.csproj -c Release -r win-x64",
     "build:sidecar": "dotnet publish ../audio-sidecar/AudioSidecar.csproj -c Release -r win-x64 --self-contained true",
     "pack": "npm run build:sidecar && npm run build && electron-builder --dir",
     "dist": "npm run build:sidecar && npm run build && electron-builder"
@@ -27,6 +28,7 @@
     "@electron-toolkit/eslint-config-prettier": "^2.0.0",
     "@electron-toolkit/eslint-config-ts": "^1.0.1",
     "@electron-toolkit/tsconfig": "^1.0.1",
+    "@types/node": "^20.19.42",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^5.0.4",
     "electron": "^30.0.1",
