@@ -30,6 +30,9 @@ public sealed class AudioChunkMessage
     public int SampleRate { get; init; }
     public int Channels { get; init; }
     public string Format { get; init; } = "pcm_s16le";
+    public string? DeviceName { get; init; }
+    public double? Rms { get; init; }
+    public double? Peak { get; init; }
     public required string DataBase64 { get; init; }
 }
 

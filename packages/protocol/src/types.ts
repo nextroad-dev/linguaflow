@@ -10,6 +10,9 @@ export type AudioChunkMessage = {
   sampleRate: number;
   channels: number;
   format: AudioSampleFormat;
+  deviceName?: string;
+  rms?: number;
+  peak?: number;
   dataBase64: string;
 };
 

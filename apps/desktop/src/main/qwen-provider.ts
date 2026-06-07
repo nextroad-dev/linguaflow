@@ -5,6 +5,7 @@ import type { SubtitleSegment, SubtitleState } from "@protocol";
 
 type QwenProviderEvents = {
   open: [];
+  ready: [];
   close: [code: number, reason: string];
   error: [error: Error];
   subtitle: [state: SubtitleState];
@@ -15,6 +16,7 @@ export type QwenProviderOptions = {
   apiKey?: string;
   model?: string;
   url?: string;
+  region?: "cn" | "intl";
   sourceLanguage?: string;
   targetLanguage?: string;
 };
@@ -31,10 +33,11 @@ export class QwenProvider extends EventEmitter {
   private sourceText = "";
   private translatedText = "";
   private currentSegmentId = randomUUID();
+  private sessionReady = false;
 
-  private readonly apiKey: string;
+  private apiKey: string;
   private readonly model: string;
-  private readonly url: string;
+  private url: string;
   private readonly sourceLanguage: string;
   private readonly targetLanguage: string;
 
@@ -44,8 +47,11 @@ export class QwenProvider extends EventEmitter {
     super();
 
     this.apiKey = options.apiKey ?? process.env.DASHSCOPE_API_KEY ?? "";
-    this.model = options.model ?? process.env.QWEN_REALTIME_MODEL ?? "qwen3-live-translate-flash-realtime";
-    this.url = options.url ?? "wss://dashscope.aliyuncs.com/api-ws/v1/realtime";
+    this.model = options.model ?? process.env.QWEN_REALTIME_MODEL ?? "qwen3.5-livetranslate-flash-realtime";
+    this.url =
+      options.url ??
+      process.env.QWEN_REALTIME_URL ??
+      getRealtimeEndpoint(options.region ?? readRegionFromEnv() ?? "cn");
     this.sourceLanguage = options.sourceLanguage ?? "auto";
     this.targetLanguage = options.targetLanguage ?? "zh";
     this.subtitleState = {
@@ -102,14 +108,27 @@ export class QwenProvider extends EventEmitter {
   }
 
   close(): void {
+    this.sendJson({
+      event_id: randomUUID(),
+      type: "session.finish"
+    });
     this.ws?.close();
     this.ws = null;
+    this.sessionReady = false;
     this.subtitleState = { ...this.subtitleState, isListening: false };
     this.emitSubtitle(false);
   }
 
+  setApiKey(apiKey: string): void {
+    this.apiKey = apiKey;
+  }
+
+  setRegion(region: "cn" | "intl"): void {
+    this.url = getRealtimeEndpoint(region);
+  }
+
   sendAudio(base64Data: string): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.sessionReady) {
       return;
     }
 
@@ -128,8 +147,15 @@ export class QwenProvider extends EventEmitter {
       type: "session.update",
       session: {
         modalities: ["text"],
-        input_audio_format: "pcm16",
-        instructions: `Translate the speaker from ${this.sourceLanguage} to ${this.targetLanguage}. Return concise live subtitles.`
+        input_audio_format: "pcm",
+        output_audio_format: "pcm",
+        input_audio_transcription: {
+          model: "qwen3-asr-flash-realtime",
+          language: this.sourceLanguage === "auto" ? "en" : this.sourceLanguage
+        },
+        translation: {
+          language: this.targetLanguage
+        }
       }
     });
   }
@@ -145,7 +171,27 @@ export class QwenProvider extends EventEmitter {
     }
 
     this.emit("raw", payload);
+    this.handleControlEvent(payload);
     this.applySubtitleDelta(payload);
+  }
+
+  private handleControlEvent(payload: unknown): void {
+    if (!isRecord(payload)) {
+      return;
+    }
+
+    const type = readString(payload, "type");
+
+    if (type === "session.updated") {
+      this.sessionReady = true;
+      this.emit("ready");
+      return;
+    }
+
+    if (type === "error") {
+      const message = pickNestedText(payload, [["error", "message"]]) ?? "Qwen realtime server returned an error";
+      this.emit("error", new Error(message));
+    }
   }
 
   private applySubtitleDelta(payload: unknown): void {
@@ -154,7 +200,7 @@ export class QwenProvider extends EventEmitter {
     }
 
     const type = readString(payload, "type");
-    const transcript = pickText(payload, ["transcript", "text", "delta"]);
+    const transcript = pickCompositeText(payload, ["transcript", "text", "delta", "stash"]);
     const translation = pickNestedText(payload, [
       ["translation"],
       ["output", "translation"],
@@ -240,6 +286,17 @@ function pickText(payload: Record<string, unknown>, keys: string[]): string | un
   return undefined;
 }
 
+function pickCompositeText(payload: Record<string, unknown>, keys: string[]): string | undefined {
+  const text = pickText(payload, keys);
+  const stash = readString(payload, "stash");
+
+  if (text && stash && text !== stash) {
+    return `${text}${stash}`;
+  }
+
+  return text ?? stash;
+}
+
 function pickNestedText(payload: Record<string, unknown>, paths: string[][]): string | undefined {
   for (const path of paths) {
     let value: unknown = payload;
@@ -268,4 +325,16 @@ function readString(payload: Record<string, unknown>, key: string): string | und
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function readRegionFromEnv(): "cn" | "intl" | undefined {
+  return process.env.QWEN_REALTIME_REGION === "intl" || process.env.QWEN_REALTIME_REGION === "cn"
+    ? process.env.QWEN_REALTIME_REGION
+    : undefined;
+}
+
+function getRealtimeEndpoint(region: "cn" | "intl"): string {
+  return region === "intl"
+    ? "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
+    : "wss://dashscope.aliyuncs.com/api-ws/v1/realtime";
 }

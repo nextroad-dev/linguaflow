@@ -231,6 +231,38 @@ function getDefaultSidecarExecutablePath(): string {
       "Release",
       "net8.0",
       "win-x64",
+      "AudioSidecar.exe"
+    ),
+    resolve(
+      process.cwd(),
+      "..",
+      "audio-sidecar",
+      "bin",
+      "Release",
+      "net8.0",
+      "win-x64",
+      "AudioSidecar.exe"
+    ),
+    resolve(
+      process.cwd(),
+      "apps",
+      "audio-sidecar",
+      "bin",
+      "Release",
+      "net8.0",
+      "win-x64",
+      "AudioSidecar.exe"
+    ),
+    resolve(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "audio-sidecar",
+      "bin",
+      "Release",
+      "net8.0",
+      "win-x64",
       "publish",
       "AudioSidecar.exe"
     ),
