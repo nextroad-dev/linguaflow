@@ -3,13 +3,13 @@ import { BrowserWindow, screen } from "electron";
 
 export function createOverlayWindow(): BrowserWindow {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.workAreaSize;
+  const { x, y, width, height } = primaryDisplay.workArea;
 
   const win = new BrowserWindow({
-    width: Math.min(width, 1200),
-    height: 180,
-    x: Math.floor((width - Math.min(width, 1200)) / 2),
-    y: Math.floor(height * 0.72),
+    width,
+    height,
+    x,
+    y,
     transparent: true,
     frame: false,
     alwaysOnTop: true,

@@ -16,6 +16,7 @@ public sealed class AudioCaptureService : IDisposable
     private readonly List<byte> pendingBytes = new(TargetChunkBytes * 2);
 
     private WasapiLoopbackCapture? capture;
+    private string? deviceName;
     private long sequence;
     private bool disposed;
     private double sourcePosition;
@@ -35,6 +36,7 @@ public sealed class AudioCaptureService : IDisposable
 
             using var enumerator = new MMDeviceEnumerator();
             var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            deviceName = device.FriendlyName;
 
             capture = new WasapiLoopbackCapture(device);
             capture.DataAvailable += OnDataAvailable;
@@ -50,7 +52,7 @@ public sealed class AudioCaptureService : IDisposable
             {
                 Level = "info",
                 Scope = nameof(AudioCaptureService),
-                Message = "wasapi loopback capture started"
+                Message = $"wasapi loopback capture started: {deviceName}"
             });
         }
     }
@@ -165,6 +167,8 @@ public sealed class AudioCaptureService : IDisposable
 
     private void SendAudioChunk(byte[] chunk)
     {
+        var levels = CalculatePcm16Levels(chunk);
+
         Program.SendMessage(new AudioChunkMessage
         {
             Sequence = sequence++,
@@ -172,8 +176,34 @@ public sealed class AudioCaptureService : IDisposable
             SampleRate = TargetSampleRate,
             Channels = TargetChannels,
             Format = "pcm_s16le",
+            DeviceName = deviceName,
+            Rms = levels.Rms,
+            Peak = levels.Peak,
             DataBase64 = Convert.ToBase64String(chunk)
         });
+    }
+
+    private static (double Rms, double Peak) CalculatePcm16Levels(byte[] chunk)
+    {
+        if (chunk.Length < BytesPerSample)
+        {
+            return (0, 0);
+        }
+
+        var sampleCount = chunk.Length / BytesPerSample;
+        var sumSquares = 0d;
+        var peak = 0d;
+
+        for (var offset = 0; offset + 1 < chunk.Length; offset += BytesPerSample)
+        {
+            var sample = BitConverter.ToInt16(chunk, offset) / 32768d;
+            var abs = Math.Abs(sample);
+
+            sumSquares += sample * sample;
+            peak = Math.Max(peak, abs);
+        }
+
+        return (Math.Sqrt(sumSquares / sampleCount), peak);
     }
 
     private static float[] DecodeToMonoFloat(byte[] buffer, int bytesRecorded, WaveFormat format)

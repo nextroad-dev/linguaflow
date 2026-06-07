@@ -21,6 +21,7 @@
     "@ai-live-interpreter/protocol": "workspace:*",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
+    "@fluentui/svg-icons": "^1.1.328",
     "vue": "^3.4.21",
     "ws": "^8.21.0"
   },

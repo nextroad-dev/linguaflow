@@ -10,6 +10,9 @@ export type AudioChunkMessage = {
   sampleRate: number;
   channels: number;
   format: AudioSampleFormat;
+  deviceName?: string;
+  rms?: number;
+  peak?: number;
   dataBase64: string;
 };
 
@@ -62,6 +65,7 @@ export type SubtitleState = {
   isListening: boolean;
   sourceLanguage?: string;
   targetLanguage?: string;
+  visible?: SubtitleSegment;
   current?: SubtitleSegment;
   history: SubtitleSegment[];
   lastError?: string;

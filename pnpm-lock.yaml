@@ -19,6 +19,9 @@ importers:
       '@electron-toolkit/utils':
         specifier: ^3.0.0
         version: 3.0.0(electron@30.5.1)
+      '@fluentui/svg-icons':
+        specifier: ^1.1.328
+        version: 1.1.328
       vue:
         specifier: ^3.4.21
         version: 3.5.35(typescript@5.9.3)
@@ -371,6 +374,9 @@ packages:
   '@eslint/js@8.57.1':
     resolution: {integrity: sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
+
+  '@fluentui/svg-icons@1.1.328':
+    resolution: {integrity: sha512-QSfxXJ34s0wr+FopPdAh2RKfOi+6EmsgXbAgo7ho0disnzn+m3mS3Ol6Ln4iADZ4v6X3kcXrA0VsZeEzJPO0tQ==}
 
   '@humanwhocodes/config-array@0.13.0':
     resolution: {integrity: sha512-DZLEEqFWQFiyK6h5YIeynKx7JlvCYWL0cImfSRXZ9l4Sg2efkFGTuFf6vzXjK1cq6IYkU+Eg/JizXw+TD2vRNw==}
@@ -2494,6 +2500,8 @@ snapshots:
       - supports-color
 
   '@eslint/js@8.57.1': {}
+
+  '@fluentui/svg-icons@1.1.328': {}
 
   '@humanwhocodes/config-array@0.13.0':
     dependencies:
